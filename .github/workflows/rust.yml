@@ -1,0 +1,68 @@
+name: Build FFI All Platforms
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 — 原生构建
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: libeasytier_ffi.so
+          
+          # Linux aarch64 — 在 Ubuntu 上交叉编译
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: libeasytier_ffi.so
+            cross: true
+          
+          # Windows x86_64 — 原生构建，彻底避开交叉编译的 windivert 路径问题
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: easytier_ffi.dll
+          
+          # macOS — 原生 runner（建议 aarch64，如需 Intel 可另加一行）
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: libeasytier_ffi.dylib
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Windows 和 macOS 的 Git 对 SCP 格式子模块 URL 兼容性不一定好，统一重写
+      - name: Configure Git URL rewrite
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Linux aarch64 交叉编译工具链
+      - name: Install aarch64 cross toolchain
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Configure aarch64 linker
+        if: matrix.cross
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml << 'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build easytier-ffi
+        run: cargo build --release --package easytier-ffi --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easytier-ffi-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
